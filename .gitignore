@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+database/attendance.db
+dataset/
+models/*.pt
+models/*.pkl
