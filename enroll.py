@@ -1,15 +1,17 @@
 import cv2
 import os
+import sys
 from ultralytics import YOLO
 
-def enroll_face():
-    #  YOLOv8 face detection model load gareko
-    # yo model le frame ma face kata cha bhanera detect garcha
+def enroll_face(name_from_gui=None):
     model = YOLO('models/yolov8n-face.pt')
     
-    name = input("Enter person's name: ").strip().replace(" ", "_")
-
-    #  dataset bhitra tyo manche ko naam ko naya folder banayeko
+    # Terminal ko sato GUI bata nam e liyeko
+    if name_from_gui:
+        name = name_from_gui
+    else:
+        name = input("Enter person's name: ").strip().replace(" ", "_")
+        
     output_dir = os.path.join("dataset", name)
     os.makedirs(output_dir, exist_ok=True)
     # webcam start gareko (0 bhaneko primary camera ho)
@@ -36,15 +38,19 @@ def enroll_face():
             cv2.imwrite(f"{output_dir}/{count}.jpg", face) 
 # Screen ma face ko woripari green box banayeko
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-# १०. Live window dekhayeko        
+#  Live window dekhayeko        
         cv2.imshow("Enroll Face", frame)
-# ११. Exit condition: 'q' thichema wa 20 ota photo save bhayema stop huncha
+#  Exit condition: 'q' thichema wa 20 ota photo save bhayema stop huncha
         if cv2.waitKey(1) == ord('q') or count >= 20:
             break
-# १२. Camera banda gareko ra windows close gareko
+#  Camera banda gareko ra windows close gareko
     cap.release()
     cv2.destroyAllWindows()
     print(f"{name} enrolled with {count} images!")
 
 if __name__ == "__main__":
-    enroll_face()
+    # Check if name was passed from app.py
+    if len(sys.argv) > 1:
+        enroll_face(sys.argv[1])
+    else:
+        enroll_face()
