@@ -1,32 +1,53 @@
-import os
+import cv2
 import face_recognition
 import pickle
+import os
 
-def train_faces():
-#  Dataset ko photos haru lai mathematical data (encodings) ma badalne function
+def generate_encodings():
+    # Sabai photo bhayeko common folder path
+    dataset_path = "dataset/all_faces"
+    models_dir = "models"
+    os.makedirs(models_dir, exist_ok=True)
+    
     known_encodings = []
     known_names = []
-#  'dataset' folder bhitra bhayeka sabai student ko folders haru scan gareko  
-    for person in os.listdir("dataset"):
-        person_dir = os.path.join("dataset", person)
-#  Yadi tyo directory ho bhane matra bhitra ko images haru herne
-        if os.path.isdir(person_dir):
-            for img_file in os.listdir(person_dir):
-                img_path = os.path.join(person_dir, img_file)
-#  Photo lai face_recognition library use garera load gareko
-                image = face_recognition.load_image_file(img_path)
-#  Face ko unique features nikaleko (Yeslai 128-dimensional encoding bhannincha)
 
-                encoding = face_recognition.face_encodings(image)
-# Yadi photo ma face bhetiyo bhane matra list ma store garne
-                if encoding:
-                    known_encodings.append(encoding[0])
-                    known_names.append(person)
+    print("--- Encoding Process Start bhayo ---")
 
-    # Save encodings
-    with open("models/encodings.pkl", "wb") as f:
+    # Folder bhitra bhayeka sabai images check gareko
+    if not os.path.exists(dataset_path):
+        print(f"Error: {dataset_path} folder vetiyena!")
+        return
+
+    for image_name in os.listdir(dataset_path):
+        if image_name.endswith((".jpg", ".png", ".jpeg")):
+            # Filename bata name matra nikaleko 
+            # "pranju_shrestha_1.jpg" lai "_" ma split garera "pranju_shrestha" liyeko
+            person_name = image_name.rsplit('_', 1)[0]
+            
+            image_path = os.path.join(dataset_path, image_name)
+            image = cv2.imread(image_path)
+            
+            if image is None:
+                continue
+                
+            rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+            # Face encoding nikaleko
+            # HOG model fast huncha, accurate ko lagi 'cnn' use garna sakincha
+            boxes = face_recognition.face_locations(rgb_image, model='hog')
+            encodings = face_recognition.face_encodings(rgb_image, boxes)
+
+            if encodings:
+                known_encodings.append(encodings[0])
+                known_names.append(person_name)
+                print(f"Success: {image_name} encoded for {person_name}")
+
+    # Data lai .pkl file ma save gareko
+    with open('models/encodings.pkl', 'wb') as f:
         pickle.dump((known_encodings, known_names), f)
-    print(f"Trained {len(known_names)} faces!")
+    
+    print("✅ Encodings saved! Aba attendance.py run garna tayar cha.")
 
 if __name__ == "__main__":
-    train_faces()
+    generate_encodings()

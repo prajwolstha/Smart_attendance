@@ -4,52 +4,65 @@ import sys
 from ultralytics import YOLO
 
 def enroll_face(name_from_gui=None):
+    # YOLO model load gareko
     model = YOLO('models/yolov8n-face.pt')
     
-    # Terminal ko sato GUI bata nam e liyeko
+    # Check garne: Streamlit bata nam aako cha ki nai
     if name_from_gui:
         name = name_from_gui
     else:
+        # User le manually script run garema matra terminal ma sodhcha
         name = input("Enter person's name: ").strip().replace(" ", "_")
         
-    output_dir = os.path.join("dataset", name)
+    output_dir = "dataset/all_faces"
     os.makedirs(output_dir, exist_ok=True)
-    # webcam start gareko (0 bhaneko primary camera ho)
+    
+    # Laptop camera (0) open gareko
     cap = cv2.VideoCapture(0)  
     count = 0
     
+    if not cap.isOpened():
+        print("Error: Camera khulena!")
+        return
+
+    print(f"Starting enrollment for {name}. Photo khichdai cha...")
+
     while True:
         ret, frame = cap.read()
         if not ret:
             break
         
-        
-# YOLO model use garera face detect gareko
+        # Face detect gareko
         results = model(frame, verbose=False)
         boxes = results[0].boxes.xyxy.cpu().numpy()
      
         for box in boxes:
             x1, y1, x2, y2 = map(int, box)
-# pura frame bata face matra cut-out (crop) gareko
-# ROI (Region of Interest) 
             face = frame[y1:y2, x1:x2]
-            count += 1
-# Cropped face lai tyo manche ko folder ma save gareko
-            cv2.imwrite(f"{output_dir}/{count}.jpg", face) 
-# Screen ma face ko woripari green box banayeko
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-#  Live window dekhayeko        
-        cv2.imshow("Enroll Face", frame)
-#  Exit condition: 'q' thichema wa 20 ota photo save bhayema stop huncha
+            
+            if face.size > 0:
+                count += 1
+                # Filename logic: Name_Number.jpg
+                file_path = f"{output_dir}/{name}_{count}.jpg"
+                cv2.imwrite(file_path, face) 
+                
+                # Screen ma feedback dekhayeko
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(frame, f"Captured: {count}/20", (x1, y1-10), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+        cv2.imshow("Enroll Face - All in One Folder", frame)
+        
+        # 20 photo bhayepachi aafai banda huncha
         if cv2.waitKey(1) == ord('q') or count >= 20:
             break
-#  Camera banda gareko ra windows close gareko
+
     cap.release()
     cv2.destroyAllWindows()
-    print(f"{name} enrolled with {count} images!")
+    print(f"✅ Success! 20 images of {name} saved.")
 
 if __name__ == "__main__":
-    # Check if name was passed from app.py
+    # System arguments check gareko (Streamlit le pathauda index 1 ma name huncha)
     if len(sys.argv) > 1:
         enroll_face(sys.argv[1])
     else:

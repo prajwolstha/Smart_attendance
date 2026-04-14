@@ -7,22 +7,26 @@ from ultralytics import YOLO
 import face_recognition
 import os
 
-# Yesma YOLO model ko 'nano' version (yolov8n) use bhako cha
+# --- INITIALIZATION ---
 model = YOLO('models/yolov8n-face.pt')
 
-#Pailai train bhayera baseko face data (encodings) load gareko
-with open('models/encodings.pkl', 'rb') as f:
-    known_encodings, known_names = pickle.load(f)
+try:
+    with open('models/encodings.pkl', 'rb') as f:
+        known_encodings, known_names = pickle.load(f)
+except FileNotFoundError:
+    print("Error: encodings.pkl not found. Run train.py first.")
+    exit()
 
-# Attendance mark garne function
+# Load Background (720x620 as per your measurements)
+imgBackground = cv2.imread('assets/frame.png')
+
+# Settings
+CONFIRMATION_TIME = 4 
+
 def mark_attendance(name, conn):
     today = datetime.now().strftime("%Y-%m-%d")
     time = datetime.now().strftime("%H:%M:%S")
-    
     cursor = conn.cursor()
-    
-#Attendance pailai mark bhako cha ki chaina check gareko
-# Eutai manche ko ek din ma ek choti matra attendance hosh bhannalaai yo check gareko ho
     cursor.execute("SELECT * FROM attendance WHERE name=? AND date=?", (name, today))
     if not cursor.fetchone():
         cursor.execute("INSERT INTO attendance (name, date, time) VALUES (?, ?, ?)", (name, today, time))
@@ -30,81 +34,93 @@ def mark_attendance(name, conn):
         print(f"✅ Attendance marked for {name}")
     cursor.close()
 
-#  Database ma bhako attendance records herne function
-def view_attendance(conn):
-# Attendance table chaina bhane naya table create gareko
-    cursor = conn.cursor()
-    cursor.execute("SELECT name, date, time FROM attendance")
-    records = cursor.fetchall()
-    print("\n--- Attendance Records ---")
-    for idx, (name, date, time) in enumerate(records, 1):
-        print(f"{idx}. {name} | Date: {date} | Time: {time}")
-    cursor.close()
-
 def main():
-    
+    os.makedirs('database', exist_ok=True)
     conn = sqlite3.connect('database/attendance.db')
     
-    cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS attendance
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      name TEXT,
-                      date TEXT,
-                      time TEXT)''')
-    conn.commit()
-    cursor.close()
-    
-    #Webcam start gareko
+    attendance_counters = {}
     cap = cv2.VideoCapture(0)
-    print("Starting attendance system... (Press 'q' to quit)")
     
+    # Standard webcam internal capture size
+    cap.set(3, 640)
+    cap.set(4, 480)
+
+    print("System Running... Press 'q' to quit.")
+
     while True:
-        ret, frame =    cap.read()
-        if not ret:
+        success, img = cap.read()
+        if not success:
             break
-        
-#    YOLO use garera frame ma face detect gareko
-        results = model(frame, verbose=False)
+
+        # 1. AI Processing on raw camera 'img'
+        results = model(img, verbose=False)
         boxes = results[0].boxes.xyxy.cpu().numpy()
-        
+        faces_in_frame = []
+
         for box in boxes:
             x1, y1, x2, y2 = map(int, box)
-            face = frame[y1:y2, x1:x2]
+            face = img[y1:y2, x1:x2]
             name = "Unknown"
             
-#  Photo ko color BGR bata RGB ma convert gareko
-# OpenCV le BGR use garcha tara face_recognition library lai RGB चाहिन्छ     
-            rgb_face = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
- #  Face encoding nikaleko           
-            face_encodings = face_recognition.face_encodings(rgb_face)
-            if face_encodings:
- #  Live face lai database ko known face sanga compare gareko               
-                matches = face_recognition.compare_faces(known_encodings, face_encodings[0])
-                face_distances = face_recognition.face_distance(known_encodings, face_encodings[0])
-# Sabai bhanda dherai milne (minimum distance bhako) face chhaneko
-                best_match_idx = np.argmin(face_distances)
+            if face.size > 0:
+                rgb_face = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
+                face_encodings = face_recognition.face_encodings(rgb_face)
                 
-                if matches[best_match_idx]:
-                    name = known_names[best_match_idx]
-                    mark_attendance(name, conn)
+                if face_encodings:
+                    matches = face_recognition.compare_faces(known_encodings, face_encodings[0])
+                    face_distances = face_recognition.face_distance(known_encodings, face_encodings[0])
+                    best_match_idx = np.argmin(face_distances)
+
+                    if matches[best_match_idx]:
+                        name = known_names[best_match_idx]
+                        faces_in_frame.append(name)
+                        
+                        current_time = datetime.now()
+                        if name not in attendance_counters:
+                            attendance_counters[name] = current_time
+                        else:
+                            elapsed = (current_time - attendance_counters[name]).total_seconds()
+                            progress = min(int((elapsed / CONFIRMATION_TIME) * 100), 100)
+                            
+                            # Progress Text
+                            cv2.putText(img, f"{progress}%", (x1, y2 + 25), 
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                            
+                            if elapsed >= CONFIRMATION_TIME:
+                                mark_attendance(name, conn)
+                                cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 4)
+
+            # Draw Label
+            cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 0), 2)
+            cv2.putText(img, name, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
+        # --- THE FIX: LAYERING & RESIZING ---
+        # Create a fresh copy of the background
+        display_img = imgBackground.copy()
+
+        # Calculate width and height from your Paint points:
+        # X: 1 to 720 (Width = 719)
+        # Y: 84 to 550 (Height = 466)
+        try:
+            img_resized = cv2.resize(img, (719, 466))
             
-#  Screen ma box ra manche ko naam dekhayeko        
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(frame, name, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+            # Slicing: [y_start : y_end, x_start : x_end]
+            display_img[84:550, 1:720] = img_resized
+        except Exception as e:
+            print(f"Layout Error: {e}. Check if frame.png is actually 720x620.")
+
+        # Timer reset logic
+        for person in list(attendance_counters.keys()):
+            if person not in faces_in_frame:
+                del attendance_counters[person]
+
+        cv2.imshow("Smart Attendance System", display_img)
         
-        cv2.imshow("Attendance System", frame)
         if cv2.waitKey(1) == ord('q'):
             break
-# Camara release garne ra database close garne
+
     cap.release()
     cv2.destroyAllWindows()
-    print("\nAttendance system stopped.")
-    
-    
-    choice = input("\nView attendance records? (y/n): ").lower()
-    if choice == 'y':
-        view_attendance(conn)
-    
     conn.close()
 
 if __name__ == "__main__":
