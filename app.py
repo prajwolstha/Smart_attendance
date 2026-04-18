@@ -4,146 +4,157 @@ import sqlite3
 import os
 import sys
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
+import plotly.express as px
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="smart attendance system", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Orchid Admin Portal", layout="wide", page_icon="🏫")
+
+# --- MODERN UI STYLING ---
+st.markdown("""
+    <style>
+    .stApp { background-color: #f4f7f9; }
+    [data-testid="stSidebar"] { background-color: #111827; }
+    .main-header { font-size: 2.5rem; color: #111827; font-weight: 700; margin-bottom: 1rem; }
+    div[data-testid="stMetric"] {
+        background-color: white;
+        border: 1px solid #e5e7eb;
+        padding: 20px;
+        border-radius: 15px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
 python_exe = sys.executable 
-CSV_RECORDS = "database/student_details.csv"
-ATTENDANCE_DB = "database/attendance.db"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ATTENDANCE_DB = os.path.join(BASE_DIR, "database", "attendance.db")
+CSV_RECORDS = os.path.join(BASE_DIR, "database", "student_details.csv")
 
-# Ensure directories exist
-os.makedirs("database", exist_ok=True)
-
-# Initialize CSV for student details if it doesn't exist
-if not os.path.exists(CSV_RECORDS):
-    df_init = pd.DataFrame(columns=["Name", "Roll", "Semester", "Program", "Enroll_Date"])
-    df_init.to_csv(CSV_RECORDS, index=False)
-
-# --- SESSION STATE FOR LOGIN ---
 if 'admin_logged_in' not in st.session_state:
     st.session_state.admin_logged_in = False
 
-# --- MODERN NAVIGATION (Top Bar Style) ---
-if st.session_state.admin_logged_in:
-    # Top header for Admin
-    nav_col1, nav_col2, nav_col3 = st.columns([6, 2, 1])
-    with nav_col1:
-        st.subheader("🚀 Smart Attendance Admin")
-    with nav_col2:
-        page = st.selectbox("Navigation", ["Dashboard", "Live Attendance"], label_visibility="collapsed")
-    with nav_col3:
-        if st.button("Logout", type="secondary", use_container_width=True):
+# --- SIDEBAR NAV (Modern Selectbox) ---
+with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/3449/3449692.png", width=70)
+    st.title("Orchid Portal")
+    
+    if st.session_state.admin_logged_in:
+        # Replaced Radio with Selectbox for modern feel
+        page = st.selectbox("MENU", ["📊 Analytics Dashboard", "📹 Attendance Camera", "👥 Student Management"])
+        if st.button("Logout", use_container_width=True):
             st.session_state.admin_logged_in = False
             st.rerun()
-else:
-    # Top header for Guest
-    nav_col1, nav_col2 = st.columns([8, 2])
-    with nav_col1:
-        st.subheader("🚀 Smart Attendance System")
-    with nav_col2:
-        page = st.selectbox("Menu", ["Live Attendance", "Admin Login"], label_visibility="collapsed")
+    else:
+        page = st.selectbox("GUEST MENU", ["📹 Attendance Camera", "🔐 Admin Login"])
 
-st.divider()
+# --- CORE FUNCTIONS ---
+def get_conn():
+    return sqlite3.connect(ATTENDANCE_DB) if os.path.exists(ATTENDANCE_DB) else None
 
-# --- PAGE LOGIC ---
+# --- PAGES ---
 
-# 1. LIVE ATTENDANCE
-if page == "Live Attendance":
-    st.title("📹 Facial Recognition Attendance")
-    st.info("System matches your face and verifies for 4 seconds.")
-    if st.button("Start Camera", type="primary", use_container_width=True):
-        subprocess.run([python_exe, "attendance.py"])
+if "Camera" in page:
+    st.markdown('<h1 class="main-header">📹 Attendance Scanner</h1>', unsafe_allow_html=True)
+    c1, c2 = st.columns([2,1])
+    with c1:
+        st.info("The camera will close automatically once your attendance is recorded.")
+        if st.button("LAUNCH SCANNER", type="primary", use_container_width=True):
+            subprocess.run([python_exe, "attendance.py"])
+            st.success("Attendance Captured! You can check the dashboard now.")
 
-# 2. ADMIN LOGIN
-elif page == "Admin Login":
-    st.title("🔐 Admin Portal")
-    col_l, col_r = st.columns([1, 1])
-    with col_l:
-        user = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        if st.button("Verify Identity", use_container_width=True, type="primary"):
-            if user == "admin" and password == "admin123": 
+elif "Login" in page:
+    st.title("Admin Access")
+    with st.form("login_form"):
+        u = st.text_input("Username")
+        p = st.text_input("Password", type="password")
+        if st.form_submit_button("Login"):
+            if u == "admin" and p == "admin123":
                 st.session_state.admin_logged_in = True
                 st.rerun()
-            else:
-                st.error("Invalid credentials.")
+            else: st.error("Invalid credentials")
 
-# 3. ADMIN DASHBOARD
-elif page == "Dashboard":
-    # --- METRICS SECTION ---
+elif "Analytics Dashboard" in page:
+    st.markdown('<h1 class="main-header">System Analytics</h1>', unsafe_allow_html=True)
+    df_details = pd.read_csv(CSV_RECORDS)
+    conn = get_conn()
+    
+    # Metrics
+    m1, m2, m3 = st.columns(3)
+    today = datetime.now().strftime('%Y-%m-%d')
+    present = 0
+    if conn:
+        try: present = pd.read_sql(f"SELECT COUNT(DISTINCT name) FROM attendance WHERE date='{today}'", conn).iloc[0,0]
+        except: pass
+    
+    m1.metric("Enrolled", len(df_details))
+    m2.metric("Present Today", present)
+    m3.metric("System Status", "Active", delta="Ready")
+
+    st.markdown("---")
+    
+    # Graphs
+    g1, g2 = st.columns(2)
+    with g1:
+        if conn:
+            trend = pd.read_sql("SELECT date, COUNT(name) as count FROM attendance GROUP BY date ORDER BY date DESC LIMIT 7", conn)
+            fig = px.line(trend, x='date', y='count', title="Weekly Volume", markers=True)
+            st.plotly_chart(fig, use_container_width=True)
+    with g2:
+        if not df_details.empty:
+            fig2 = px.pie(df_details, names='Program', title="Student Base by Program", hole=0.5)
+            st.plotly_chart(fig2, use_container_width=True)
+
+elif "Student Management" in page:
+    st.markdown('<h1 class="main-header">Management Portal</h1>', unsafe_allow_html=True)
     df_details = pd.read_csv(CSV_RECORDS)
     
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total Students", len(df_details))
+    tab1, tab2, tab3 = st.tabs(["📋 Reports", "➕ Enrollment", "⚙️ AI Sync"])
     
-    # Calculate Today's Attendance
-    if os.path.exists(ATTENDANCE_DB):
-        conn = sqlite3.connect(ATTENDANCE_DB)
-        today = datetime.now().strftime('%Y-%m-%d')
-        present_today = pd.read_sql_query(f"SELECT COUNT(DISTINCT name) as c FROM attendance WHERE date='{today}'", conn)['c'][0]
-        conn.close()
-    else:
-        present_today = 0
-        
-    m2.metric("Present Today", present_today)
-    m3.metric("Programs", len(df_details['Program'].unique()) if len(df_details)>0 else 0)
-    m4.metric("Status", "System Online")
-
-    # --- MAIN TABS ---
-    tab1, tab2, tab3 = st.tabs(["📋 Student Directory", "➕ New Enrollment", "⚙️ Model Training"])
-
-    # TAB 1: REGISTERED STUDENTS LIST WITH FILTERS
     with tab1:
-        st.subheader("Student Database")
-        if not df_details.empty:
-            # Filter Row
-            f1, f2, f3 = st.columns(3)
-            search = f1.text_input("Search Name")
-            filter_sem = f2.multiselect("Filter Semester", options=df_details['Semester'].unique())
-            filter_prog = f3.multiselect("Filter Program", options=df_details['Program'].unique())
+        # Replacing Radio with Selectbox for report type
+        view_mode = st.selectbox("View Records For:", ["Class-wise", "Individual Student"])
+        conn = get_conn()
+        
+        if conn:
+            if view_mode == "Class-wise":
+                c1, c2 = st.columns(2)
+                d = c1.date_input("Date", datetime.now())
+                prog = c2.selectbox("Program", df_details['Program'].unique())
+                
+                query = f"SELECT name, time FROM attendance WHERE date='{d}'"
+                att_df = pd.read_sql(query, conn)
+                
+                # Normalization
+                att_df['m_name'] = att_df['name'].str.replace("_", " ").str.lower()
+                df_details['m_name'] = df_details['Name'].str.replace("_", " ").str.lower()
+                
+                report = pd.merge(df_details[df_details['Program']==prog], att_df, on='m_name')
+                st.table(report[['Name', 'Roll', 'time']])
+                
+            else:
+                selected = st.selectbox("Search Student Name", sorted(df_details['Name'].unique()))
+                # PROBLEM 1 FIX: Match both spaced and underscored versions
+                search_name = selected.replace(" ", "_")
+                query = f"SELECT date, time FROM attendance WHERE name = '{selected}' OR name = '{search_name}'"
+                hist = pd.read_sql(query, conn)
+                
+                if not hist.empty:
+                    st.dataframe(hist, use_container_width=True)
+                else:
+                    st.warning("No attendance records found for this student.")
 
-            # Applying logic
-            filtered_df = df_details.copy()
-            if search:
-                filtered_df = filtered_df[filtered_df['Name'].str.contains(search, case=False)]
-            if filter_sem:
-                filtered_df = filtered_df[filtered_df['Semester'].isin(filter_sem)]
-            if filter_prog:
-                filtered_df = filtered_df[filtered_df['Program'].isin(filter_prog)]
-
-            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
-        else:
-            st.info("No students registered yet.")
-
-    # TAB 2: ENROLLMENT FORM
     with tab2:
-        st.subheader("Add New Student")
-        with st.form("enroll_form", clear_on_submit=True):
-            col_a, col_b = st.columns(2)
-            new_name = col_a.text_input("Full Name")
-            new_roll = col_b.text_input("Roll Number")
-            new_sem = col_a.selectbox("Semester", ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th"])
-            new_prog = col_b.selectbox("Program", ["BCA", "CSIT", "BBM", "BBA", "B.Tech"])
-            
-            if st.form_submit_button("Capture Biometrics", use_container_width=True):
-                if new_name and new_roll:
-                    # Save to CSV
-                    entry = pd.DataFrame([[new_name, new_roll, new_sem, new_prog, datetime.now().strftime("%Y-%m-%d")]], 
-                                         columns=["Name", "Roll", "Semester", "Program", "Enroll_Date"])
-                    df_details = pd.concat([df_details, entry], ignore_index=True)
-                    df_details.to_csv(CSV_RECORDS, index=False)
-                    
-                    # Call enrollment script
-                    subprocess.run([python_exe, "enroll.py", new_name.strip().replace(" ", "_")])
-                    st.success(f"Successfully enrolled {new_name}")
-                    st.rerun()
+        with st.form("enroll"):
+            n = st.text_input("Full Name")
+            r = st.text_input("Roll")
+            p = st.selectbox("Program", ["BCA", "CSIT", "BBM"])
+            if st.form_submit_button("Enroll"):
+                new_data = pd.DataFrame([[n, r, "1st", p, today]], columns=df_details.columns)
+                pd.concat([df_details, new_data]).to_csv(CSV_RECORDS, index=False)
+                subprocess.run([python_exe, "enroll.py", n.replace(" ", "_")])
+                st.success("Done!")
 
-    # TAB 3: TRAINING
     with tab3:
-        st.subheader("Update Recognition Brain")
-        st.write("Clicking this button will process all enrolled photos into the AI model.")
-        if st.button("🔥 Sync & Train Model", type="primary", use_container_width=True):
-            with st.spinner("Training..."):
-                subprocess.run([python_exe, "train.py"])
-            st.success("System updated successfully!")
+        if st.button("Retrain AI Model"):
+            subprocess.run([python_exe, "train.py"])
+            st.success("Encodings Updated")
